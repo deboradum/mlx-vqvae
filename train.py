@@ -13,16 +13,11 @@ from torch.utils.data import DataLoader
 from models.vqvae import VQVAE
 
 
-
-
 def get_dataloaders(batch_size):
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-            # transforms.Normalize(
-            #     mean=[0.4914, 0.4822, 0.4465], std=[0.247, 0.243, 0.261]
-            # ),
         ]
     )
 
@@ -45,18 +40,16 @@ def get_dataloaders(batch_size):
     return train_loader, test_loader, x_train_var
 
 
-def save_snapshot(net, batch, path="results/0/"):
+def save_snapshot(net, loader, path="results/0/"):
+    net.train(False)
     os.makedirs(path, exist_ok=True)
 
+    batch, _ = next(iter(test_loader))
+    batch = mx.array(batch.numpy()).transpose(0, 2, 3, 1)
     x_hat, _, _, _, _ = net(batch)
+
     x_hat = np.array(x_hat)
     batch = np.array(batch)
-
-    # print("Batch min/max:", batch.min(), batch.max(), batch.var(axis=(2,3)).mean(1))
-    # print("x_hat min/max:", x_hat.min(), x_hat.max(), x_hat.var(axis=(2, 3)).mean(1))
-
-    separator = 11  # Width of the separator
-    sep_color = (0, 255, 0)
 
     for i in range(batch.shape[0]):
         orig = batch[i]
@@ -67,7 +60,7 @@ def save_snapshot(net, batch, path="results/0/"):
 
         h, w, c = orig.shape
 
-        separator_img = np.full((h, separator, c), sep_color, dtype=np.uint8)
+        separator_img = np.full((h, 1, c), (0, 255, 0), dtype=np.uint8)
 
         combined = np.concatenate([orig, separator_img, recon], axis=1).astype(np.uint8)
         img = Image.fromarray(combined)
@@ -80,22 +73,20 @@ def loss_fn(net, X):
     recon_loss = ((x_hat - X) ** 2).mean() / x_train_var
     loss = recon_loss + loss_term_1 + loss_term_2
 
-    print(
-        # f"Epoch {epoch}, step {i} - loss: {loss.item():.5f}, recon_loss: {recon_loss.item():.5f}, perplexity: {perplexity.item():.5f}, closest_indices: {len(np.unique(closest_indices.numpy()))}, loss_term_1: {loss_term_1.item():.5f}, loss_term_2: {loss_term_2.item():.5f}"
-        f"loss: {loss.item():.5f}, recon_loss: {recon_loss.item():.5f}, perplexity: {perplexity.item():.5f}, closest_indices: {len(np.unique(np.array(closest_indices)))}, loss_term_1: {loss_term_1.item():.5f}, loss_term_2: {loss_term_2.item():.5f}"
-    )
+    metrics["total_loss"].append(loss.item())
+    metrics["recon_loss"].append(recon_loss.item())
+    metrics["loss_term_1"].append(loss_term_1.item())
+    metrics["loss_term_2"].append(loss_term_2.item())
+    metrics["perplexity"].append(perplexity.item())
 
     return loss
 
 
 def train(epochs, net, optimizer, train_loader, test_loader, x_train_var, log_every=50):
     loss_and_grad_fn = nn.value_and_grad(net, loss_fn)
-    # Train loop
     for epoch in range(epochs):
-        X_test, _ = next(iter(test_loader))
-        X_test = mx.array(X_test.numpy()).transpose(0, 2, 3, 1)
-        save_snapshot(net, X_test, path=f"results/{epoch}")
-        running_loss = 0.0
+        save_snapshot(net, test_loader, path=f"results/{epoch}")
+        net.train(True)
         for i, (X, _) in enumerate(train_loader):
             X = mx.array(X.numpy()).transpose(0, 2, 3, 1)
 
@@ -105,20 +96,20 @@ def train(epochs, net, optimizer, train_loader, test_loader, x_train_var, log_ev
 
             if i % log_every == 0:
                 print(
-                    # f"Epoch {epoch}, step {i} - loss: {loss.item():.5f}, recon_loss: {recon_loss.item():.5f}, perplexity: {perplexity.item():.5f}, closest_indices: {len(np.unique(closest_indices.numpy()))}, loss_term_1: {loss_term_1.item():.5f}, loss_term_2: {loss_term_2.item():.5f}"
-                    f"Epoch {epoch}, step {i}"
+                    f"Epoch {epoch}, step {i} - loss: {metrics['total_loss'][-1]:.5f}, recon_loss: {metrics['recon_loss'][-1]:.5f}, perplexity: {metrics['perplexity'][-1]:.5f}"
                 )
 
-            running_loss += loss.item()
-
-        print("Average loss:", running_loss / len(train_loader))
-
-
 if __name__ == "__main__":
+    metrics = {
+        "total_loss": [],
+        "recon_loss": [],
+        "loss_term_1": [],
+        "loss_term_2": [],
+        "perplexity": [],
+    }
     net = VQVAE(128, 32, 2, 512, 64, 0.25)
 
-    optimizer = optim.Adam(learning_rate=1e-4)
-    # optimizer = optim.SGD(learning_rate=lr=0.00001)
+    optimizer = optim.Adam(learning_rate=5e-4)
 
     train_loader, test_loader, x_train_var = get_dataloaders(batch_size=32)
     train(10, net, optimizer, train_loader, test_loader, x_train_var)
