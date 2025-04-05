@@ -1,4 +1,5 @@
 import os
+import time
 
 import numpy as np
 import mlx.nn as nn
@@ -82,8 +83,21 @@ def loss_fn(net, X):
     return loss
 
 
+def get_avg(values):
+    return sum(values) / len(values)
+
+
+def get_avg_metrics(window):
+    total_loss = get_avg(metrics["total_loss"][-window:-1])
+    recon_loss = get_avg(metrics["recon_loss"][-window:-1])
+    perplexity = get_avg(metrics["perplexity"][-window:-1])
+
+    return total_loss, recon_loss, perplexity
+
+
 def train(epochs, net, optimizer, train_loader, test_loader, x_train_var, log_every=50):
     loss_and_grad_fn = nn.value_and_grad(net, loss_fn)
+    s = time.perf_counter()
     for epoch in range(epochs):
         save_snapshot(net, test_loader, path=f"results/{epoch}")
         net.train(True)
@@ -94,9 +108,13 @@ def train(epochs, net, optimizer, train_loader, test_loader, x_train_var, log_ev
             optimizer.update(net, grads)
             mx.eval(net.parameters(), optimizer.state)
 
-            if i % log_every == 0:
+            if i % log_every == 0 and i > 0:
+                took = time.perf_counter() - s
+                time_per_it = took / log_every
+                avg_total_loss, avg_recon_loss, avg_perplexity = get_avg_metrics(log_every)
+                s = time.perf_counter()
                 print(
-                    f"Epoch {epoch}, step {i} - loss: {metrics['total_loss'][-1]:.5f}, recon_loss: {metrics['recon_loss'][-1]:.5f}, perplexity: {metrics['perplexity'][-1]:.5f}"
+                    f"Epoch {epoch}, step {i} - loss: {avg_total_loss:.5f}, recon_loss: {avg_recon_loss:.5f}, perplexity: {avg_perplexity:.5f}. Took {took:.3f}s ({time_per_it:.3f} s/it)"
                 )
 
 if __name__ == "__main__":
@@ -107,7 +125,7 @@ if __name__ == "__main__":
         "loss_term_2": [],
         "perplexity": [],
     }
-    net = VQVAE(128, 32, 2, 512, 64, 0.25)
+    net = VQVAE(128, 32, 2, 1024, 128, 0.25)
 
     optimizer = optim.Adam(learning_rate=5e-4)
 
